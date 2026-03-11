@@ -8,6 +8,7 @@ struct GameView: View {
     @State private var engine = GameEngine()
     @State private var showingSettings = false
     @State private var showingStats = false
+    @State private var showingMenu = false
     
     @State private var timeAttackTimer: Timer?
     
@@ -48,7 +49,7 @@ struct GameView: View {
                             
                             // User input text field mock
                             Text(engine.currentInput)
-                                .font(.largeTitle).fontWeight(.regular)
+                                .font(.largeTitle).fontWeight(.medium)
                                 .foregroundColor(engine.currentInput.isEmpty ? .clear : .primary)
                                 .frame(minWidth: 60, minHeight: 65)
                                 .padding(.horizontal, 16)
@@ -78,6 +79,62 @@ struct GameView: View {
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: engine.currentProblem?.text)
                 .animation(.easeInOut(duration: 0.5), value: engine.isSessionComplete)
             }
+            .overlay(alignment: .top) {
+                if showingMenu {
+                    ZStack(alignment: .top) {
+                        Color.black.opacity(0.001)
+                            .ignoresSafeArea()
+                            .onTapGesture {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                                    showingMenu = false
+                                }
+                            }
+                        
+                        VStack(spacing: 0) {
+                            Button {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                                    showingMenu = false
+                                }
+                                engine.endSession()
+                            } label: {
+                                HStack {
+                                    Text("End Game")
+                                    Spacer()
+                                    Image(systemName: "flag.checkered")
+                                }
+                                .padding()
+                                .contentShape(Rectangle())
+                            }
+                            
+                            Divider().padding(.horizontal, 16)
+                            
+                            Button {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                                    showingMenu = false
+                                }
+                                showingStats = true
+                            } label: {
+                                HStack {
+                                    Text("Show Analytics")
+                                    Spacer()
+                                    Image(systemName: "chart.xyaxis.line")
+                                }
+                                .padding()
+                                .contentShape(Rectangle())
+                            }
+                        }
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.primary)
+                        .frame(width: 220)
+                        .padding(.vertical, 8)
+                        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                        .shadow(color: Color.black.opacity(0.15), radius: 20, x: 0, y: 10)
+                        .padding(.top, 8)
+                        .transition(.scale(scale: 0.85, anchor: .top).combined(with: .opacity))
+                    }
+                    .zIndex(1)
+                }
+            }
             .contentShape(Rectangle())
             .gesture(
                 DragGesture()
@@ -96,42 +153,19 @@ struct GameView: View {
                     }
                 }
                 
-                
                 ToolbarItem(placement: .principal) {
                     if !engine.isSessionComplete {
-                        HStack(spacing: 16) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(.green)
-                                Text("\(engine.totalCorrectSession)")
-                                    .foregroundColor(.green)
+                        Button {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                                showingMenu.toggle()
                             }
-                            .font(.system(size: 14, weight: .medium))
-                            
-                            if engine.gameMode == "Timed" {
-                                Text("\(engine.timeRemaining)s")
-                                    .font(.system(size: 16, weight: .semibold))
-                                    .monospacedDigit()
-                            } else if engine.gameMode == "Zen" {
-                                Image(systemName: "infinity")
-                                    .font(.system(size: 20, weight: .semibold))
-                                    .padding(.horizontal, 8)
-                            } else {
-                                Text("\(engine.problemsSolvedInSession + 1) / \(engine.sessionLength)")
-                                    .font(.system(size: 16, weight: .semibold))
-                            }
-                            
-                            HStack(spacing: 6) {
-                                Image(systemName: "xmark.circle.fill")
-                                    .foregroundColor(.red)
-                                Text("\(engine.totalIncorrectSession)")
-                                    .foregroundColor(.red)
-                            }
-                            .font(.system(size: 14, weight: .medium))
+                        } label: {
+                            sessionStatsContent
+                                .padding(.vertical, 12)
+                                .padding(.horizontal, 16)
+                                .glassEffect(showingMenu ? .regular : .regular, in: .capsule)
                         }
-                        .padding(.vertical, 12)
-                        .padding(.horizontal, 12)
-                        .glassEffect(.regular.interactive(), in: .capsule)
+                        .buttonStyle(.plain)
                     }
                 }
                 
@@ -259,25 +293,54 @@ struct GameView: View {
             
             // Basic Weakness Targeting Update
             if engine.gameMode == "Standard" && engine.problemsSolvedInSession > 0 && !engine.activeCategories.isEmpty {
-                // Approximate overall session speed update to the selected categories
-                // A complete robust system would map each individual question duration back to its specific category.
-                // For MVP: distribute the session average to active metrics to slowly drag the overall metric.
                 for cat in engine.activeCategories {
                     let existing = currentStats.categoryMetrics[cat.rawValue] ?? 0.0
                     if existing == 0.0 {
                         currentStats.categoryMetrics[cat.rawValue] = avgTime
                     } else {
-                        // Weighted moving average (e.g. 80% old, 20% new)
+                        // Weighted moving average
                         currentStats.categoryMetrics[cat.rawValue] = (existing * 0.8) + (avgTime * 0.2)
                     }
                 }
-                // Push back to engine to influence next round
                 engine.categoryMetrics = currentStats.categoryMetrics
             }
         }
     }
     
     // MARK: - Subviews
+    
+    private var sessionStatsContent: some View {
+        HStack(spacing: 16) {
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.green)
+                Text("\(engine.totalCorrectSession)")
+                    .foregroundColor(.green)
+            }
+            .font(.system(size: 14, weight: .medium))
+            
+            if engine.gameMode == "Timed" {
+                Text("\(engine.timeRemaining)s")
+                    .font(.system(size: 16, weight: .semibold))
+                    .monospacedDigit()
+            } else if engine.gameMode == "Zen" {
+                Image(systemName: "infinity")
+                    .font(.system(size: 20, weight: .semibold))
+                    .padding(.horizontal, 8)
+            } else {
+                Text("\(engine.problemsSolvedInSession + 1) / \(engine.sessionLength)")
+                    .font(.system(size: 16, weight: .semibold))
+            }
+            
+            HStack(spacing: 6) {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundColor(.red)
+                Text("\(engine.totalIncorrectSession)")
+                    .foregroundColor(.red)
+            }
+            .font(.system(size: 14, weight: .medium))
+        }
+    }
     
     private var summaryView: some View {
         VStack(spacing: 30) {
