@@ -29,7 +29,26 @@ final class GameEngine {
     var currentStreak: Int = 0 
     
     var problemsSolvedInSession: Int = 0
-    let totalProblemsPerSession: Int = 20
+    var sessionLength: Int = 20 // 0 means endless
+    
+    // Timed properties
+    var gameMode: String = "Standard"
+    var timeAttackDuration: Int = 60
+    var timeRemaining: Int = 60
+    
+    // Preferences
+    var hapticsEnabled: Bool = true
+    
+    // Session state
+    var isSessionComplete: Bool = false
+    var sessionStartTime: Date?
+    
+    // Granular Analytics
+    var currentProblemStartTime: Date?
+    var problemDurations: [TimeInterval] = []
+    
+    // Category Metrics for Weakness Targeting
+    var categoryMetrics: [String: Double] = [:]
     
     // UI Trackers
     var totalCorrectSession: Int = 0
@@ -37,12 +56,13 @@ final class GameEngine {
     
     var activeCategories: [ProblemCategory] = [.basicArithmetic] {
         didSet {
-            // Generate problem on initial load or if they previously had no categories selected.
-            // Do not force a reroll mid-game when closing the settings menu.
-            if currentProblem == nil || currentProblem?.text == "Select Category" {
-                generateNewProblem()
-            } else if activeCategories.isEmpty {
-                currentProblem = Problem(text: "Select Category", displayLines: nil, expectedAnswer: "---")
+            // Only auto-roll if not complete
+            if !isSessionComplete {
+                if currentProblem == nil || currentProblem?.text == "Select Category" {
+                    generateNewProblem()
+                } else if activeCategories.isEmpty {
+                    currentProblem = Problem(text: "Select Category", displayLines: nil, expectedAnswer: "---")
+                }
             }
         }
     }
@@ -50,10 +70,33 @@ final class GameEngine {
     var onProblemSolved: (() -> Void)?
     
     init() {
-        // Will generate when View loads and sets activeCategories
+        // Initialization handled when View configures the engine from UserStats
+    }
+    
+    func startSession() {
+        problemsSolvedInSession = 0
+        totalCorrectSession = 0
+        totalIncorrectSession = 0
+        isSessionComplete = false
+        sessionStartTime = Date()
+        problemDurations = []
+        
+        if gameMode == "Timed" {
+            timeRemaining = timeAttackDuration
+        }
+        
+        generateNewProblem()
+    }
+    
+    func endSession() {
+        isSessionComplete = true
+        currentProblem = nil // Clear problem to trigger UI changes
+        onProblemSolved?() // Using this to trigger save routine in view
     }
     
     func generateNewProblem() {
+        if isSessionComplete { return }
+        
         guard !activeCategories.isEmpty else {
             currentProblem = Problem(text: "Select Category", displayLines: nil, expectedAnswer: "---")
             return
@@ -84,10 +127,31 @@ final class GameEngine {
             validCategories = activeCategories
         }
         
-        let selectedCategory = validCategories.randomElement()!
+        // Weakness Targeting logic: prioritize categories with higher average time (slower)
+        var categoryWeights: [(ProblemCategory, Double)] = []
+        for cat in validCategories {
+            // Base weight is 1.0. If metric exists, add it to base weight to increase likelihood.
+            // e.g. 5.5s average time -> weight 6.5. 1.2s average time -> weight 2.2
+            let metric = categoryMetrics[cat.rawValue] ?? 0.0
+            categoryWeights.append((cat, 1.0 + metric))
+        }
+        
+        let totalWeight = categoryWeights.reduce(0) { $0 + $1.1 }
+        let rand = Double.random(in: 0..<totalWeight)
+        
+        var selectedCategory: ProblemCategory = validCategories.randomElement()! // Fallback
+        var currentWeight = 0.0
+        for (cat, weight) in categoryWeights {
+            currentWeight += weight
+            if currentWeight >= rand {
+                selectedCategory = cat
+                break
+            }
+        }
         
         self.currentProblem = buildProblemFor(category: selectedCategory, level: currentDifficultyLevel)
         self.currentInput = ""
+        self.currentProblemStartTime = Date()
     }
     
     private func buildProblemFor(category: ProblemCategory, level: Int) -> Problem {
@@ -247,15 +311,21 @@ final class GameEngine {
     // MARK: - Handlers
     
     func skipProblem() {
+        if isSessionComplete { return }
+        
         // Count as an attempted problem but unanswered
         problemsSolvedInSession += 1
         totalIncorrectSession += 1
         
-        // Notify tracking to increment total questions seen
-        onProblemSolved?()
+        recordProblemDuration()
+        checkSessionConstraints()
         
-        currentInput = ""
-        generateNewProblem()
+        if !isSessionComplete {
+            // Notify tracking to increment total questions seen
+            onProblemSolved?()
+            currentInput = ""
+            generateNewProblem()
+        }
     }
     
     func submitDigit(_ digit: String) {
@@ -291,23 +361,51 @@ final class GameEngine {
         if currentInput == problem.expectedAnswer {
             // Correct
             isEvaluating = true
-            Haptics.shared.playCorrect()
+            if hapticsEnabled {
+                Haptics.shared.playCorrect()
+            }
             currentStreak += 1
             problemsSolvedInSession += 1
             totalCorrectSession += 1
+            
+            recordProblemDuration()
             
             // Adjust difficulty: level up every 4 streaks
             if currentStreak > 0 && currentStreak % 4 == 0 {
                 currentDifficultyLevel += 1
             }
             
-            onProblemSolved?()
+            checkSessionConstraints()
             
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                self.generateNewProblem()
-                self.isEvaluating = false
+            if !isSessionComplete {
+                onProblemSolved?()
+                
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    self.generateNewProblem()
+                    self.isEvaluating = false
+                }
+            } else {
+                isEvaluating = false
             }
         }
+    }
+    
+    private func recordProblemDuration() {
+        if let startTime = currentProblemStartTime {
+            let duration = Date().timeIntervalSince(startTime)
+            problemDurations.append(duration)
+        }
+    }
+    
+    private func checkSessionConstraints() {
+        if gameMode == "Standard" && sessionLength > 0 {
+            if problemsSolvedInSession >= sessionLength {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    self.endSession()
+                }
+            }
+        }
+        // Timed constraint handled by timer in View injecting `timeRemaining`
     }
     
     func forceSubmit() {
@@ -318,7 +416,9 @@ final class GameEngine {
             checkAnswer()
         } else {
             // Incorrect
-            Haptics.shared.playIncorrect()
+            if hapticsEnabled {
+                Haptics.shared.playIncorrect()
+            }
             currentStreak = 0
             totalIncorrectSession += 1
             if currentDifficultyLevel > 1 {

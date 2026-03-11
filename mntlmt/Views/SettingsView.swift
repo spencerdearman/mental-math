@@ -11,64 +11,104 @@ struct SettingsView: View {
     // We bind to a local copy to allow immediate UI toggling,
     // then write back on dismiss or immediately
     @State private var localActiveCategories: Set<ProblemCategory> = []
+    @State private var localSessionLength: Int = 20
+    @State private var localGameMode: String = "Standard"
+    @State private var localTimeAttackDuration: Int = 60
+    @State private var localThemePreference: String = "System"
+    @State private var localHapticsEnabled: Bool = true
     
-    // Callback to tell GameEngine to reload config
-    let onCategoriesUpdated: ([ProblemCategory]) -> Void
+    // Callback to tell GameEngine to reload config and potentially restart
+    let onSettingsSaved: ([ProblemCategory], String) -> Void
+    
+    private func colorScheme(for preference: String) -> ColorScheme? {
+        switch preference {
+        case "Light": return .light
+        case "Dark": return .dark
+        default: return nil
+        }
+    }
     
     var body: some View {
-        ZStack {
-            Color.white.ignoresSafeArea()
-            
-            VStack(alignment: .leading, spacing: 30) {
-                
-                HStack {
-                    Text("Categories")
-                        .font(.system(size: 28, weight: .heavy))
-                        .foregroundColor(.black)
+        NavigationStack {
+            Form {
+                Section(header: Text("Game Mode")) {
+                    Picker("Mode", selection: $localGameMode) {
+                        Text("Standard").tag("Standard")
+                        Text("Timed").tag("Timed")
+                        Text("Zen").tag("Zen")
+                    }
+                    .pickerStyle(.segmented)
                     
-                    Spacer()
-                    
-                    Button {
-                        saveAndDismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 20, weight: .medium))
-                            .foregroundColor(.black)
+                    if localGameMode == "Standard" {
+                        Picker("Questions per Session", selection: $localSessionLength) {
+                            Text("10").tag(10)
+                            Text("20").tag(20)
+                            Text("50").tag(50)
+                            Text("Endless").tag(0)
+                        }
+                    } else if localGameMode == "Timed" {
+                        Picker("Duration (Seconds)", selection: $localTimeAttackDuration) {
+                            Text("30s").tag(30)
+                            Text("60s").tag(60)
+                            Text("120s").tag(120)
+                        }
+                    } else if localGameMode == "Zen" {
+                        Text("Infinite practice with no constraints.")
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
                     }
                 }
-                .padding(.bottom, 20)
                 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 25) {
-                        ForEach(ProblemCategory.allCases, id: \.self) { category in
-                            HStack {
-                                Text(category.rawValue)
-                                    .font(.system(size: 18, weight: .regular))
-                                    .foregroundColor(localActiveCategories.contains(category) ? .black : Color(white: 0.7))
-                                
-                                Spacer()
-                                
-                                if localActiveCategories.contains(category) {
-                                    Image(systemName: "checkmark")
-                                        .font(.system(size: 16, weight: .semibold))
-                                        .foregroundColor(.black)
+                Section(header: Text("Categories")) {
+                    ForEach(ProblemCategory.allCases, id: \.self) { category in
+                        Toggle(category.rawValue, isOn: Binding(
+                            get: { localActiveCategories.contains(category) },
+                            set: { isSelected in
+                                if isSelected {
+                                    localActiveCategories.insert(category)
+                                } else {
+                                    if localActiveCategories.count > 1 {
+                                        localActiveCategories.remove(category)
+                                    }
                                 }
                             }
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                toggleCategory(category)
-                            }
-                        }
+                        ))
                     }
                 }
                 
-                Spacer()
+                Section(header: Text("Preferences")) {
+                    Toggle("Haptic Feedback", isOn: $localHapticsEnabled)
+                    
+                    Picker("Theme", selection: $localThemePreference) {
+                        Text("System").tag("System")
+                        Text("Light").tag("Light")
+                        Text("Dark").tag("Dark")
+                    }
+                    .pickerStyle(.segmented)
+                    .onChange(of: localThemePreference) { _, newValue in
+                        userStats.themePreference = newValue
+                    }
+                }
             }
-            .padding(.horizontal, 30)
-            .padding(.top, 40)
+            .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        saveAndDismiss()
+                    }
+                    .fontWeight(.bold)
+                }
+            }
         }
+        .preferredColorScheme(colorScheme(for: localThemePreference))
         .onAppear {
             localActiveCategories = Set(userStats.activeCategories)
+            localSessionLength = userStats.sessionLength
+            localGameMode = userStats.gameMode
+            localTimeAttackDuration = userStats.timeAttackDuration
+            localThemePreference = userStats.themePreference
+            localHapticsEnabled = userStats.hapticsEnabled
         }
     }
     
@@ -84,9 +124,15 @@ struct SettingsView: View {
     }
     
     private func saveAndDismiss() {
-        let newCategories = Array(localActiveCategories)
+        let newCategories = Array(localActiveCategories).sorted { $0.rawValue < $1.rawValue }
         userStats.activeCategories = newCategories
-        onCategoriesUpdated(newCategories)
+        userStats.sessionLength = localSessionLength
+        userStats.gameMode = localGameMode
+        userStats.timeAttackDuration = localTimeAttackDuration
+        userStats.themePreference = localThemePreference
+        userStats.hapticsEnabled = localHapticsEnabled
+        
+        onSettingsSaved(newCategories, localGameMode)
         dismiss()
     }
 }

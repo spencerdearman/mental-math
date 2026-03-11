@@ -6,7 +6,7 @@ struct Haptics {
     private init() {}
     
     func playCorrect() {
-        let generator = UIImpactFeedbackGenerator(style: .light)
+        let generator = UIImpactFeedbackGenerator(style: .medium)
         generator.prepare()
         generator.impactOccurred()
     }
