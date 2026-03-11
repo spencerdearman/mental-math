@@ -72,7 +72,6 @@ struct GameView: View {
                             .padding(.bottom, 40)
                             .transition(.opacity)
                     } else {
-                        // Empty space to balance summary in center
                         Spacer().frame(height: 100)
                     }
                 }
@@ -80,57 +79,91 @@ struct GameView: View {
                 .animation(.easeInOut(duration: 0.5), value: engine.isSessionComplete)
             }
             .overlay(alignment: .top) {
-                if showingMenu {
+                if !engine.isSessionComplete {
                     ZStack(alignment: .top) {
-                        Color.black.opacity(0.001)
-                            .ignoresSafeArea()
-                            .onTapGesture {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                                    showingMenu = false
+                        // Invisible background to dismiss the menu
+                        if showingMenu {
+                            Color.black.opacity(0.001)
+                                .ignoresSafeArea()
+                                .onTapGesture {
+                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                                        showingMenu = false
+                                    }
                                 }
-                            }
+                        }
                         
+                        // The Dynamic Island Morphing Container
                         VStack(spacing: 0) {
+                            // Always visible Header (The Pill Content)
                             Button {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                                    showingMenu = false
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                                    showingMenu.toggle()
                                 }
-                                engine.endSession()
                             } label: {
-                                HStack {
-                                    Text("End Game")
-                                    Spacer()
-                                    Image(systemName: "flag.checkered")
-                                }
-                                .padding()
-                                .contentShape(Rectangle())
+                                sessionStatsContent
+                                    .padding(.horizontal, showingMenu ? 20 : 16)
                             }
+                            .buttonStyle(.plain)
+                            .frame(height: 48) // Fixed height prevents jitter
                             
-                            Divider().padding(.horizontal, 16)
-                            
-                            Button {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                                    showingMenu = false
+                            // Expanding Menu Items (Height animated, clipped by parent)
+                            VStack(spacing: 0) {
+                                Divider().padding(.horizontal, 16)
+                                
+                                Button {
+                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                                        showingMenu = false
+                                    }
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                        engine.endSession()
+                                    }
+                                } label: {
+                                    HStack {
+                                        Text("End Game")
+                                        Spacer()
+                                        Image(systemName: "flag.checkered")
+                                    }
+                                    .padding(.vertical, 14)
+                                    .padding(.horizontal, 20)
+                                    .contentShape(Rectangle())
                                 }
-                                showingStats = true
-                            } label: {
-                                HStack {
-                                    Text("Show Analytics")
-                                    Spacer()
-                                    Image(systemName: "chart.xyaxis.line")
+                                
+                                Divider().padding(.horizontal, 16)
+                                
+                                Button {
+                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                                        showingMenu = false
+                                    }
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                        showingStats = true
+                                    }
+                                } label: {
+                                    HStack {
+                                        Text("Show Analytics")
+                                        Spacer()
+                                        Image(systemName: "chart.xyaxis.line")
+                                    }
+                                    .padding(.vertical, 14)
+                                    .padding(.horizontal, 20)
+                                    .contentShape(Rectangle())
                                 }
-                                .padding()
-                                .contentShape(Rectangle())
                             }
+                            .frame(height: showingMenu ? 100 : 0) // Controls the stretch
+                            .opacity(showingMenu ? 1 : 0) // Smooth text fade
                         }
                         .font(.system(size: 16, weight: .medium))
                         .foregroundColor(.primary)
-                        .frame(width: 220)
-                        .padding(.vertical, 8)
-                        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-                        .shadow(color: Color.black.opacity(0.15), radius: 20, x: 0, y: 10)
-                        .padding(.top, 8)
-                        .transition(.scale(scale: 0.85, anchor: .top).combined(with: .opacity))
+                        .frame(width: showingMenu ? 240 : 180)
+                        .background(
+                            Color.clear
+                                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: showingMenu ? 32 : 24, style: .continuous))
+                        )
+                        // Clip shape guarantees inner text does not bleed outside the glassy background during animation
+                        .clipShape(RoundedRectangle(cornerRadius: showingMenu ? 32 : 24, style: .continuous))
+                        .shadow(color: Color.black.opacity(0.15), radius: showingMenu ? 20 : 5, x: 0, y: showingMenu ? 10 : 2)
+                        // Offset pulls the overlay directly into the system toolbar space
+//                        .offset(y: -50)
+                        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: showingMenu)
                     }
                     .zIndex(1)
                 }
@@ -153,21 +186,7 @@ struct GameView: View {
                     }
                 }
                 
-                ToolbarItem(placement: .principal) {
-                    if !engine.isSessionComplete {
-                        Button {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                                showingMenu.toggle()
-                            }
-                        } label: {
-                            sessionStatsContent
-                                .padding(.vertical, 12)
-                                .padding(.horizontal, 16)
-                                .glassEffect(showingMenu ? .regular : .regular, in: .capsule)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
+                // .principal placement remains empty to allow overlay offset to fill the space
                 
                 ToolbarItem(placement: .topBarTrailing) {
                     if !engine.isSessionComplete {
@@ -208,14 +227,13 @@ struct GameView: View {
                 setupEngineContext()
             }
         }
-    } // Closes body
+    }
     
     // MARK: - Private Methods
     
     private func setupEngineContext() {
         setupEngineSaveCallback()
         
-        // Load initial state
         if let stats = allStats.first {
             engine.activeCategories = stats.activeCategories
             engine.sessionLength = stats.sessionLength
@@ -265,7 +283,6 @@ struct GameView: View {
             
             currentStats.totalProblemsSolved += 1
             
-            // Basic daily streak tracking
             let calendar = Calendar.current
             if !calendar.isDateInToday(currentStats.lastPlayedDate) {
                 if calendar.isDateInYesterday(currentStats.lastPlayedDate) {
@@ -276,7 +293,6 @@ struct GameView: View {
                 currentStats.lastPlayedDate = Date()
             }
             
-            // Session Log & Analytics Data
             let totalDuration = engine.problemDurations.reduce(0, +)
             let avgTime = engine.problemsSolvedInSession > 0 ? totalDuration / Double(engine.problemsSolvedInSession) : 0.0
             
@@ -291,14 +307,12 @@ struct GameView: View {
             
             currentStats.sessionLogs.append(log)
             
-            // Basic Weakness Targeting Update
             if engine.gameMode == "Standard" && engine.problemsSolvedInSession > 0 && !engine.activeCategories.isEmpty {
                 for cat in engine.activeCategories {
                     let existing = currentStats.categoryMetrics[cat.rawValue] ?? 0.0
                     if existing == 0.0 {
                         currentStats.categoryMetrics[cat.rawValue] = avgTime
                     } else {
-                        // Weighted moving average
                         currentStats.categoryMetrics[cat.rawValue] = (existing * 0.8) + (avgTime * 0.2)
                     }
                 }
